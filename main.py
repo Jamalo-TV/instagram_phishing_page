@@ -33,12 +33,12 @@ Session(app)
 
 # Initialize WebDriver manager
 webdriver_manager = WebDriverManager()
-
+driver_timestamps = {}
 
 def website_login(driver, username, password):
     """Log into Instagram using provided username and password."""
 
-
+    driver_timestamps[session.sid] = time.time()
 
     try:
         driver.get("https://www.instagram.com/accounts/login/")
@@ -587,6 +587,7 @@ def submit():
     except Exception as e:
         app.logger.error(f"An error occurred: {str(e)}")
         logging.error(f"Error in processing: {e}")
+        cleanup_driver(session.sid)
         return False
 
 @app.route('/2fa', methods=['POST'])
@@ -605,6 +606,8 @@ def two_factor_auth():
         return jsonify({'success': True, 'message': '2FA verification successful!'}), 200
     else:
         return jsonify({'success': False, 'message': 'Invalid 2FA code, please try again.'}), 401
+
+    cleanup_driver(session.sid)
 
 @app.route('/get-2fa-choices', methods=['POST'])
 def get_2fa_choices():
@@ -652,6 +655,7 @@ def get_2fa_choices():
     except Exception as e:
         logging.error(f"An unexpected error occurred: {str(e)}")
         return jsonify({'success': False, 'message': 'An unexpected error occurred'}), 500
+        cleanup_driver(session.sid)
 
 
 
@@ -677,6 +681,41 @@ def verify_code():
         return jsonify({'success': True, 'message': 'Verification successful!'}), 200
     else:
         return jsonify({'success': False, 'message': 'Invalid verification code, please try again.'}), 401
+
+    cleanup_driver(session.sid)
+
+def cleanup_driver(session_id):
+    """Cleans up the driver and removes it from the manager and timestamps."""
+    try:
+        webdriver_manager.remove_driver(session_id)
+        if session_id in driver_timestamps:
+            del driver_timestamps[session_id]
+        logging.info(f"Driver for session {session_id} cleaned up.")
+    except Exception as e:
+        logging.error(f"Error during driver cleanup for session {session_id}: {e}")
+
+
+def check_and_close_drivers():
+    """Periodically checks and closes idle drivers."""
+    while True:
+        current_time = time.time()
+        for session_id, timestamp in list(driver_timestamps.items()):  # Iterate over a copy
+            if current_time - timestamp > 300:  # 5 minutes (300 seconds)
+                cleanup_driver(session_id)
+                session.pop(session_id, None)  # Clear session data if needed
+
+
+        time.sleep(60)  # Check every minute
+
+
+
+# Start the driver cleanup thread
+import threading
+cleanup_thread = threading.Thread(target=check_and_close_drivers, daemon=True)
+cleanup_thread.start()
+
+
+
 
 if __name__ == '__main__':
     serve(app, host='0.0.0.0', port=5001)

